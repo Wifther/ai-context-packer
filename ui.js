@@ -62,7 +62,7 @@ export function printSummary({ collected, tokens, format }) {
   if (status === 'warn') {
     console.log('');
     console.log(
-      chalk.yellow('  ⚠  Token count exceeds GPT-4o limit. Consider using --exclude to trim files.')
+      chalk.yellow('  ⚠  Token count exceeds GPT-5.5 limit. Consider using --exclude to trim files.')
     );
   } else if (status === 'error') {
     console.log('');
