@@ -136,7 +136,7 @@ After packing, you'll see a summary like:
   Files skipped   118
   Total size      184.3 KB
   Est. tokens     ~47,200
-  Fits in         GPT-4o (128k), Claude 3.5 (200k), Gemini 1.5 Pro (1M)
+  Fits in         GPT-5.5 Pro (512k), Claude Opus 4.7 (1M), Gemini 3.1 Pro (2M)
 ──────────────────────────────────────────────
 ```
 
