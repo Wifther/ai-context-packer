@@ -57,8 +57,8 @@ export function formatTokenCount(tokens) {
     .map(([name]) => name);
 
   let status = 'ok';
-  if (tokens > 1_000_000) status = 'error';
-  else if (tokens > 200_000) status = 'warn';
+  if (tokens > 2_000_000) status = 'error'; // Limit pro Gemini 3.1 Pro
+  else if (tokens > 512_000) status = 'warn'; // Limit pro GPT-5.5 Pro
 
   return { formatted, fits, doesNotFit, status };
 }
