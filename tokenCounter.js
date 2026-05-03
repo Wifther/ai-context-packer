@@ -41,11 +41,11 @@ export function countTokens(text) {
 export function formatTokenCount(tokens) {
   const formatted = tokens.toLocaleString();
 
-  // Common LLM context windows (conservative usable limits)
+  // Běžná LLM kontextová okna pro rok 2026
   const limits = {
-    'GPT-4o (128k)': 128_000,
-    'Claude 3.5 (200k)': 200_000,
-    'Gemini 1.5 Pro (1M)': 1_000_000,
+    'GPT-5.5 Pro (512k)': 512_000,
+    'Claude Opus 4.7 (1M)': 1_000_000,
+    'Gemini 3.1 Pro (2M)': 2_000_000,
   };
 
   const fits = Object.entries(limits)
