@@ -4,11 +4,11 @@
   "description": "Package your codebase into a single LLM-optimized Markdown or XML context file",
   "type": "module",
   "bin": {
-    "ai-context-packer": "./src/cli.js"
+    "ai-context-packer": "./cli.js"
   },
   "scripts": {
-    "start": "node src/cli.js",
-    "dev": "node src/cli.js .",
+    "start": "node cli.js",
+    "dev": "node cli.js .",
     "link": "npm link"
   },
   "dependencies": {
