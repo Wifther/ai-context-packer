@@ -14,7 +14,7 @@ export function printBanner() {
   );
   console.log(
     chalk.cyan.bold('  ║') +
-    chalk.white.bold('   📦 ai-context-packer  v1.0.0        ') +
+    chalk.white.bold('   📦 ai-context-packer  v1.0.1        ') +
     chalk.cyan.bold('║')
   );
   console.log(
