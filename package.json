@@ -1,6 +1,6 @@
 {
   "name": "ai-context-packer",
-  "version": "2.0.0",
+  "version": "1.0.1",
   "description": "Package your codebase into a single LLM-optimized Markdown or XML context file",
   "type": "module",
   "bin": {
