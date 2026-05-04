@@ -41,7 +41,7 @@ export function countTokens(text) {
 export function formatTokenCount(tokens) {
   const formatted = tokens.toLocaleString();
 
-  // Běžná LLM kontextová okna pro rok 2026
+  
   const limits = {
     'GPT-5.5 Pro (512k)': 512_000,
     'Claude Opus 4.7 (1M)': 1_000_000,
