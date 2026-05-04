@@ -62,12 +62,12 @@ export function printSummary({ collected, tokens, format }) {
   if (status === 'warn') {
     console.log('');
     console.log(
-      chalk.yellow('  ⚠  Token count exceeds GPT-5.5 limit. Consider using --exclude to trim files.')
+      chalk.yellow('  ⚠  Token count exceeds GPT-5.5 Pro limit. Consider using --exclude to trim files.')
     );
   } else if (status === 'error') {
     console.log('');
     console.log(
-      chalk.red('  ✖  Token count is very large. Even Gemini 1M context may not fit!')
+      chalk.red('  ✖  Token count is very large. Even Gemini 3.1 Pro (2M) context may not fit!')
     );
   }
 
