@@ -1,0 +1,18 @@
+I am building v2 of my 'ai-context-packer' CLI tool. I need you to implement three major features into the existing architecture simultaneously. You must provide the fully refactored cli.js, collector.js, and formatter.js files.
+CRITICAL INSTRUCTION FOR ALL YOUR OUTPUT: Do NOT write any code comments in the generated code. Zero comments. Do not explain the code inside the code blocks. Just output the raw, functional code.
+Feature 1: Interactive TUI (-i, --interactive)
+▪ In cli.js, add the -i, --interactive flag.
+▪ If this flag is active, intercept the flow before collectFiles fully runs. Read the target directory (depth 1 or 2 max) to gather a list of main folders and files.
+▪ Use the existing prompts package (type: 'multiselect') to present this list visually in the terminal. The user must be able to check/uncheck what to include.
+▪ Pass this dynamic selection into collectFiles as dynamic --include patterns.
+Feature 2: Git-Diff Packing (--changed)
+▪ Add a --changed flag.
+▪ In collector.js, modify the Git fast-path block. If options.changed is true, change the git command execution to identify ONLY files that are currently modified, staged, or untracked (e.g., using git diff --name-only HEAD and git ls-files --others --exclude-standard).
+▪ Filter the collection process to ONLY read and pack these specific changed files. Ensure this gracefully falls back if git is not initialized.
+Feature 3: Skeleton Mode (--skeleton)
+▪ Add a --skeleton flag to drastically save tokens for massive codebases.
+▪ In formatter.js, create a powerful regex-based or AST-light parser function called skeletonize(content, lang).
+▪ If the language is JS, TS, Python, Java, or Rust, strip out the bodies/implementations of functions and methods, leaving only the signatures. (e.g., function calc(a, b) { }).
+▪ Keep class declarations, interfaces, types, and exports fully intact.
+▪ Apply skeletonize() instead of minifyContent() in the formatting outputs if the skeleton flag is active.
+Ensure all features integrate flawlessly and robustly. Do not break existing functionality (like --exclude or secrets scanning). Output the complete updated files.

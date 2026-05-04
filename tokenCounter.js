@@ -1,51 +1,17 @@
-/**
- * tokenCounter.js
- *
- * Fast heuristic token counter that avoids a heavy native dependency.
- *
- * Accuracy: within ~5% of cl100k_base (GPT-4 / Claude tokeniser) for
- * typical source-code and prose content.
- *
- * Algorithm (same heuristic used by Anthropic's public token estimator):
- *   tokens ≈ (characters / 4)
- *
- * For source code, which has lots of short identifiers and operators,
- * we use a slightly adjusted formula:
- *   tokens ≈ max(words, chars / 4)
- * where words = whitespace-split token count (good proxy for keyword-dense code).
- */
-
-/**
- * Estimate the number of tokens in `text`.
- * @param {string} text
- * @returns {number}
- */
 export function countTokens(text) {
   if (!text) return 0;
-
-  // Word count (split on whitespace)
   const words = text.trim().split(/\s+/).length;
-
-  // Character-based estimate (1 token ≈ 4 chars for English/code)
   const charBased = Math.ceil(text.length / 4);
-
-  // Take the maximum — code is often more token-dense than prose
   return Math.max(words, charBased);
 }
 
-/**
- * Format a token count as a human-readable string with a context-window hint.
- * @param {number} tokens
- * @returns {{ formatted: string, status: 'ok' | 'warn' | 'error' }}
- */
 export function formatTokenCount(tokens) {
   const formatted = tokens.toLocaleString();
 
-  
   const limits = {
-    'GPT-5.5 Pro (512k)': 512_000,
+    'GPT-5.5 Pro (1M)': 1_000_000,
     'Claude Opus 4.7 (1M)': 1_000_000,
-    'Gemini 3.1 Pro (2M)': 2_000_000,
+    'Gemini 3.1 Pro (1M)': 1_048_576,
   };
 
   const fits = Object.entries(limits)
@@ -57,8 +23,29 @@ export function formatTokenCount(tokens) {
     .map(([name]) => name);
 
   let status = 'ok';
-  if (tokens > 2_000_000) status = 'error'; // Limit pro Gemini 3.1 Pro
-  else if (tokens > 512_000) status = 'warn'; // Limit pro GPT-5.5 Pro
-  
+  if (tokens > 1_048_576) status = 'error';
+  else if (tokens > 1_000_000) status = 'warn';
+
   return { formatted, fits, doesNotFit, status };
+}
+
+export function chunkFiles(files, buildFn, formatOpts, tokenLimit) {
+  const batches = [];
+  let currentBatch = [];
+
+  for (const file of files) {
+    const candidate = [...currentBatch, file];
+    const preview = buildFn({ files: candidate, tree: '' }, { ...formatOpts, includeTree: false });
+    const tokens = countTokens(preview);
+
+    if (tokens > tokenLimit && currentBatch.length > 0) {
+      batches.push(currentBatch);
+      currentBatch = [file];
+    } else {
+      currentBatch = candidate;
+    }
+  }
+
+  if (currentBatch.length > 0) batches.push(currentBatch);
+  return batches;
 }

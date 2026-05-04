@@ -1,20 +1,13 @@
-/**
- * ui.js
- * Console banner, progress messages, and final summary output.
- */
-
 import chalk from 'chalk';
+import path from 'path';
 import { formatTokenCount } from './tokenCounter.js';
 
-/** ASCII banner printed on startup. */
 export function printBanner() {
   console.log('');
-  console.log(
-    chalk.cyan.bold('  ╔══════════════════════════════════════╗')
-  );
+  console.log(chalk.cyan.bold('  ╔══════════════════════════════════════╗'));
   console.log(
     chalk.cyan.bold('  ║') +
-    chalk.white.bold('   📦 ai-context-packer  v1.0.1        ') +
+    chalk.white.bold('   📦 ai-context-packer  v2.0.0        ') +
     chalk.cyan.bold('║')
   );
   console.log(
@@ -22,18 +15,11 @@ export function printBanner() {
     chalk.dim('   Package your codebase for LLMs      ') +
     chalk.cyan.bold('║')
   );
-  console.log(
-    chalk.cyan.bold('  ╚══════════════════════════════════════╝')
-  );
+  console.log(chalk.cyan.bold('  ╚══════════════════════════════════════╝'));
   console.log('');
 }
 
-/**
- * Print a final summary table after all processing is complete.
- *
- * @param {{ collected, tokens: number, format: string }} params
- */
-export function printSummary({ collected, tokens, format }) {
+export function printSummary({ collected, tokens, format, splitFiles = null }) {
   const { files, skipped } = collected;
   const totalBytes = files.reduce((sum, f) => sum + f.sizeBytes, 0);
   const { formatted, fits, doesNotFit, status } = formatTokenCount(tokens);
@@ -51,7 +37,6 @@ export function printSummary({ collected, tokens, format }) {
   console.log(`  ${chalk.dim('Total size    ')}  ${formatBytes(totalBytes)}`);
   console.log(`  ${chalk.dim('Est. tokens   ')}  ${tokenColor.bold('~' + formatted)}`);
 
-  // Context window fit indicators
   if (fits.length) {
     console.log(`  ${chalk.dim('Fits in       ')}  ${chalk.green(fits.join(', '))}`);
   }
@@ -59,23 +44,27 @@ export function printSummary({ collected, tokens, format }) {
     console.log(`  ${chalk.dim('Exceeds       ')}  ${chalk.red(doesNotFit.join(', '))}`);
   }
 
-  if (status === 'warn') {
+  if (splitFiles && splitFiles.length > 1) {
     console.log('');
-    console.log(
-      chalk.yellow('  ⚠  Token count exceeds GPT-5.5 Pro limit. Consider using --exclude to trim files.')
-    );
-  } else if (status === 'error') {
+    console.log(`  ${chalk.dim('Split into    ')}  ${chalk.yellow.bold(splitFiles.length + ' chunks')}`);
+    for (const sf of splitFiles) {
+      const name = path.basename(sf.path);
+      console.log(`  ${chalk.dim('  →')}  ${chalk.white(name)}  ${chalk.dim(`(~${sf.tokens.toLocaleString()} tokens, ${sf.files} files)`)}`);
+    }
+  }
+
+  if (status === 'warn' && !splitFiles) {
     console.log('');
-    console.log(
-      chalk.red('  ✖  Token count is very large. Even Gemini 3.1 Pro (2M) context may not fit!')
-    );
+    console.log(chalk.yellow('  ⚠  Token count exceeds 1M limit for GPT-5.5 / Claude 4.7. Try --chunk 1000000 to auto-split.'));
+  } else if (status === 'error' && !splitFiles) {
+    console.log('');
+    console.log(chalk.red('  ✖  Token count is massive. Even Gemini 3.1 Pro (1,048,576) may not fit. Use --chunk to split.'));
   }
 
   console.log(chalk.bold('  ──────────────────────────────────────────────'));
   console.log('');
 }
 
-/** Human-readable byte size string. */
 function formatBytes(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;

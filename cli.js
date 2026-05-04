@@ -1,37 +1,24 @@
 #!/usr/bin/env node
 
-/**
- * ai-context-packer CLI
- * Entry point — wires together all modules and handles top-level UX.
- */
-
 import { Command } from 'commander';
 import chalk from 'chalk';
 import path from 'path';
 import os from 'os';
-import { writeFile, rm, mkdtemp } from 'fs/promises';
+import { writeFile, rm, mkdtemp, readdir, stat } from 'fs/promises';
 import { execSync } from 'child_process';
 import { collectFiles } from './collector.js';
 import { buildMarkdown, buildXML } from './formatter.js';
-import { countTokens } from './tokenCounter.js';
+import { countTokens, chunkFiles } from './tokenCounter.js';
 import { scanSecrets } from './secretScanner.js';
 import { printBanner, printSummary } from './ui.js';
+import { askAI } from './api.js';
 import prompts from 'prompts';
 
-// ── GitHub URL helpers ────────────────────────────────────────────────────────
-
-/** Return true if the target looks like a GitHub (or any git) URL. */
 function isGitUrl(target) {
   return /^https?:\/\//i.test(target) || /^git@/i.test(target);
 }
 
-/**
- * Clone `url` into a fresh temp directory using `git clone --depth 1`.
- * Returns the path to the cloned repo root.
- * Throws a descriptive Error if git is missing or the clone fails.
- */
 async function cloneRepo(url) {
-  // Verify git is available
   try {
     execSync('git --version', { stdio: 'ignore' });
   } catch {
@@ -39,7 +26,7 @@ async function cloneRepo(url) {
   }
 
   const tmpBase = path.join(os.tmpdir(), 'ai-context-packer-');
-  const tmpDir  = await mkdtemp(tmpBase);
+  const tmpDir = await mkdtemp(tmpBase);
 
   console.log(chalk.dim(`  Cloning ${url} …`));
   try {
@@ -47,7 +34,6 @@ async function cloneRepo(url) {
       stdio: ['ignore', 'ignore', 'pipe'],
     });
   } catch (err) {
-    // Clean up on failure so we don't leak temp dirs
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     throw new Error(`git clone failed: ${err.stderr?.toString().trim() || err.message}`);
   }
@@ -56,22 +42,54 @@ async function cloneRepo(url) {
   return tmpDir;
 }
 
+async function getInteractiveChoices(targetPath, maxDepth = 2) {
+  const choices = [];
+
+  async function walk(dir, rel, depth) {
+    if (depth > maxDepth) return;
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        const relPath = rel ? `${rel}/${entry.name}` : entry.name;
+        const isDir = entry.isDirectory();
+        choices.push({
+          title: (rel ? '  '.repeat(depth - 1) : '') + entry.name + (isDir ? '/' : ''),
+          value: relPath + (isDir ? '/' : ''),
+          selected: true,
+        });
+        if (isDir && depth < maxDepth) {
+          await walk(path.join(dir, entry.name), relPath, depth + 1);
+        }
+      }
+    } catch {}
+  }
+
+  await walk(targetPath, '', 1);
+  return choices;
+}
+
 const program = new Command();
 
 program
   .name('ai-context-packer')
-  .description('📦 Package your codebase into a single LLM-optimized context file')
-  .version('1.0.0')
+  .description('Package your codebase into a single LLM-optimized context file')
+  .version('2.0.0')
   .argument('[target]', 'Directory or file(s) to pack', '.')
+  .option('-i, --interactive', 'Interactively select files and folders to include')
+  .option('--changed', 'Only pack files modified, staged, or untracked in git')
+  .option('--skeleton', 'Strip function bodies, keep signatures only')
   .option('-f, --format <format>', 'Output format: markdown or xml', 'markdown')
   .option('-o, --output <file>', 'Write output to a file instead of clipboard')
   .option('--no-tree', 'Omit the directory tree from output')
   .option('--no-clipboard', 'Skip copying to clipboard')
-  .option('--include <globs>', 'Comma-separated glob patterns to force-include (e.g. "*.md,*.json")')
-  .option('--exclude <globs>', 'Comma-separated glob patterns to force-exclude (e.g. "*.test.js")')
-  .option('--max-file-size <kb>', 'Skip files larger than this size in KB (default: 500)', '500')
+  .option('--include <globs>', 'Comma-separated glob patterns to force-include')
+  .option('--exclude <globs>', 'Comma-separated glob patterns to force-exclude')
+  .option('--max-file-size <kb>', 'Skip files larger than this size in KB', '500')
   .option('--no-secrets-scan', 'Disable secret/sensitive-data scanning')
   .option('--minify', 'Strip comments and blank lines to reduce token count')
+  .option('--chunk <limit>', 'Split output into multiple files if tokens exceed this limit')
+  .option('--ask <query>', 'Send the packed codebase + your query directly to an AI API')
   .action(async (target, options) => {
     printBanner();
 
@@ -82,8 +100,13 @@ program
       process.exit(1);
     }
 
-    // ── 0. GitHub / remote URL handling ──────────────────────────────────
-    let tmpDir = null;   // set when we clone so we can clean up later
+    const chunkLimit = options.chunk ? parseInt(options.chunk, 10) : null;
+    if (options.chunk && (isNaN(chunkLimit) || chunkLimit < 1)) {
+      console.error(chalk.red('✖  --chunk must be a positive integer (e.g., --chunk 500000).'));
+      process.exit(1);
+    }
+
+    let tmpDir = null;
     let resolvedTarget;
 
     if (isGitUrl(target)) {
@@ -101,15 +124,51 @@ program
     console.log(chalk.dim(`  Target  : ${target}`));
     console.log(chalk.dim(`  Format  : ${format}`));
     if (options.minify) console.log(chalk.dim('  Minify  : on'));
+    if (options.skeleton) console.log(chalk.dim('  Skeleton: on'));
+    if (options.changed) console.log(chalk.dim('  Changed : on'));
+    if (chunkLimit) console.log(chalk.dim(`  Chunk   : ${chunkLimit.toLocaleString()} tokens`));
+    if (options.ask) console.log(chalk.dim(`  Ask     : ${options.ask}`));
     console.log('');
 
-    // ── 1. Collect files ──────────────────────────────────────────────────
+    let includePatterns = options.include ? options.include.split(',') : [];
+
+    if (options.interactive) {
+      try {
+        const targetStat = await stat(resolvedTarget);
+        if (targetStat.isDirectory()) {
+          const choices = await getInteractiveChoices(resolvedTarget, 2);
+          if (choices.length === 0) {
+            console.warn(chalk.yellow('⚠  No items found for interactive selection.'));
+            process.exit(0);
+          }
+          const response = await prompts({
+            type: 'multiselect',
+            name: 'selected',
+            message: 'Select files and folders to include',
+            choices,
+            instructions: false,
+            hint: 'Space to toggle, Enter to confirm',
+          });
+          if (!response.selected || response.selected.length === 0) {
+            console.log(chalk.dim('\n  Aborted. No items selected.\n'));
+            process.exit(0);
+          }
+          const dynamicPatterns = response.selected.map(s => s.endsWith('/') ? s + '**' : s);
+          includePatterns = [...includePatterns, ...dynamicPatterns];
+        }
+      } catch (err) {
+        console.error(chalk.red(`\n✖  Interactive mode failed: ${err.message}`));
+        process.exit(1);
+      }
+    }
+
     let collected;
     try {
       collected = await collectFiles(resolvedTarget, {
-        include: options.include ? options.include.split(',') : [],
+        include: includePatterns,
         exclude: options.exclude ? options.exclude.split(',') : [],
         maxFileSizeKB: parseInt(options.maxFileSize, 10),
+        changed: options.changed,
       });
     } catch (err) {
       console.error(chalk.red(`\n✖  Failed to collect files:\n   ${err.message}`));
@@ -122,7 +181,6 @@ program
       process.exit(0);
     }
 
-    // ── 2. Secret scanning ────────────────────────────────────────────────
     if (options.secretsScan !== false) {
       const warnings = scanSecrets(collected.files);
 
@@ -152,24 +210,91 @@ program
       }
     }
 
-    // ── 3. Format output ──────────────────────────────────────────────────
-    const formatOpts = { includeTree: options.tree !== false, minify: !!options.minify };
-    const output =
-      format === 'xml'
-        ? buildXML(collected, formatOpts)
-        : buildMarkdown(collected, formatOpts);
+    const buildFn = format === 'xml' ? buildXML : buildMarkdown;
+    const formatOpts = {
+      includeTree: options.tree !== false,
+      minify: !!options.minify,
+      skeleton: !!options.skeleton,
+    };
 
-    // ── 4. Token count ────────────────────────────────────────────────────
+    if (options.ask) {
+      const fullOutput = buildFn(collected, formatOpts);
+      const tokens = countTokens(fullOutput);
+
+      console.log(chalk.dim(`  Est. tokens in context: ~${tokens.toLocaleString()}\n`));
+
+      try {
+        const { provider, text } = await askAI(fullOutput, options.ask);
+        console.log(chalk.cyan.bold(`\n  ── Response from ${provider} ${'─'.repeat(Math.max(0, 40 - provider.length))}`));
+        console.log('');
+        console.log(text);
+        console.log('');
+        console.log(chalk.cyan.bold('  ' + '─'.repeat(44)));
+        console.log('');
+      } catch (err) {
+        console.error(chalk.red(`\n✖  ${err.message}\n`));
+        if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        process.exit(1);
+      }
+
+      if (tmpDir) {
+        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        console.log(chalk.dim('  Temp clone directory removed.\n'));
+      }
+      return;
+    }
+
+    if (chunkLimit) {
+      const batches = chunkFiles(collected.files, buildFn, formatOpts, chunkLimit);
+      const totalTokens = countTokens(buildFn(collected, formatOpts));
+
+      if (batches.length === 1) {
+        console.log(chalk.dim('  ℹ  Token count fits within chunk limit — single file output.\n'));
+      } else {
+        console.log(chalk.yellow(`  ⚡  Splitting into ${batches.length} chunks (limit: ${chunkLimit.toLocaleString()} tokens)\n`));
+      }
+
+      const ext = format === 'xml' ? 'xml' : 'md';
+      const baseName = options.output
+        ? options.output.replace(/\.[^.]+$/, '')
+        : 'output';
+
+      const writtenFiles = [];
+
+      for (let idx = 0; idx < batches.length; idx++) {
+        const batchCollected = {
+          ...collected,
+          files: batches[idx],
+        };
+        const batchOutput = buildFn(batchCollected, formatOpts);
+        const suffix = batches.length > 1 ? `_part${idx + 1}` : '';
+        const fileName = `${baseName}${suffix}.${ext}`;
+        const outPath = path.resolve(process.cwd(), fileName);
+        await writeFile(outPath, batchOutput, 'utf8');
+        const batchTokens = countTokens(batchOutput);
+        writtenFiles.push({ path: outPath, tokens: batchTokens, files: batches[idx].length });
+        console.log(chalk.green(`  ✔  Part ${idx + 1}/${batches.length} → ${fileName}`) + chalk.dim(` (~${batchTokens.toLocaleString()} tokens, ${batches[idx].length} files)`));
+      }
+
+      console.log('');
+      printSummary({ collected, tokens: totalTokens, format, splitFiles: writtenFiles });
+
+      if (tmpDir) {
+        await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        console.log(chalk.dim('  Temp clone directory removed.\n'));
+      }
+      return;
+    }
+
+    const output = buildFn(collected, formatOpts);
     const tokens = countTokens(output);
 
-    // ── 5. Write / copy output ────────────────────────────────────────────
     if (options.output) {
       const outPath = path.resolve(process.cwd(), options.output);
       await writeFile(outPath, output, 'utf8');
       console.log(chalk.green(`  ✔  Output written to ${outPath}`));
     } else if (options.clipboard !== false) {
       try {
-        // Dynamic import so the tool still works if clipboard is unavailable
         const { default: clipboardy } = await import('clipboardy');
         await clipboardy.write(output);
         console.log(chalk.green('  ✔  Output copied to clipboard!'));
@@ -178,10 +303,8 @@ program
       }
     }
 
-    // ── 6. Summary ────────────────────────────────────────────────────────
     printSummary({ collected, tokens, format });
 
-    // ── 7. Cleanup temp clone dir ─────────────────────────────────────────
     if (tmpDir) {
       await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       console.log(chalk.dim('  Temp clone directory removed.\n'));
